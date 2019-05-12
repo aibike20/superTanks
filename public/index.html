@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Super Tanks</title>
+        <style>
+            body { margin: 0; overflow: hidden; }
+            .asset { display: none; }
+        </style>
+        <link rel="icon" type="image/png" href="favicon.png">
+        <link href="https://fonts.googleapis.com/css?family=Press+Start+2P" rel="stylesheet">
+        <script src="/socket.io/socket.io.js"></script>
+        <script>
+            document.addEventListener('DOMContentLoaded', () => {
+                const canvas = document.getElementById('canvas');
+                const w = canvas.width  = window.innerWidth;
+                const h = canvas.height = window.innerHeight;
+                setup(canvas.getContext('2d'), w, h);
+                document.addEventListener('keydown', e => keyDown(e.key))
+            });
+        </script>
+        <script src="models/field.js"></script>
+        <script src="models/tank.js"></script>
+        <script src="models/projectile.js"></script>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <!-- assets -->
+        <audio id="explosionSound"  class="asset" src="sounds/explosion.wav"></audio>
+        <audio id="fireSound"       class="asset" src="sounds/fire.wav"></audio>
+        <img   id="redTankImage"    class="asset" src="images/redTank.png"    alt="Red Tank Image">
+        <img   id="blueTankImage"   class="asset" src="images/blueTank.png"   alt="Blue Tank Image">
+        <img   id="tileImage"       class="asset" src="images/tile.png"       alt="Tile Image">
+        <img   id="projectileImage" class="asset" src="images/projectile.png" alt="Projectile Image">
+        <!-- logic -->
+        <script>
+            const titleFont = "6em 'Press Start 2P'";
+            const titleFontColor = 'white';
+            const subtitleFont = "2em 'Press Start 2P'";
+            const subtitleFontColor = 'gray';
+            let socket;
+            const titleState   = 0;
+            const gameState    = 1;
+            const resultsState = 2;
+            let currentState = titleState;
+            const fieldWidth = 10, fieldHeight = 10;
+            let field;
+            let tanks = {};
+            let explosionSound, fireSound;
+            let tileImage, blueTankImage, redTankImage;
+            function setup(ctx, w, h) {
+                explosionSound = document.getElementById('explosionSound');
+                fireSound      = document.getElementById('fireSound');
+                redTankImage  = document.getElementById('redTankImage');
+                blueTankImage = document.getElementById('blueTankImage');
+                tileImage     = document.getElementById('tileImage');
+                window.requestAnimationFrame(timestamp => draw(ctx, w, h, timestamp));
+            }
+            function draw(ctx, w, h, timestamp) {
+                if (w != window.innerWidth || h != window.innerHeight) {
+                    w = canvas.width  = window.innerWidth;
+                    h = canvas.height = window.innerHeight;
+                }
+                switch (currentState) {
+                    case titleState:
+                        drawTitle(ctx, w, h);
+                        break;
+                    case gameState:
+                        drawGame(ctx, w, h);
+                        break;
+                    case resultsState:
+                        drawResults(ctx, w, h);
+                        break;
+                }
+                window.requestAnimationFrame(timestamp => draw(ctx, w, h, timestamp));
+            }
+            function drawTitle(ctx, w, h) {
+                const [cx, cy] = [w * 0.5, h * 0.5];
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.rect(0, 0, w, h);
+                ctx.fill();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'white';
+                ctx.font = titleFont;
+                ctx.fillText('Super Tanks', cx, cy);
+                ctx.fillStyle = 'gray';
+                ctx.font = subtitleFont;
+                ctx.fillText('Press Space to Continue', cx, h - (h * 0.1));
+            }
+            function initGame() {
+                socket = io();
+                socket.on('upd', tanksSerialized => {
+                    console.log(tanksSerialized);
+                    for (const [id, tankSerialized] of Object.entries(tanksSerialized)) {
+                        tanks[id] = new Tank(
+                            field,
+                            tankSerialized.x,
+                            tankSerialized.y,
+                            tankSerialized.dx,
+                            tankSerialized.dy,
+                            redTankImage
+                        );
+                        tanks[id].isDead = tankSerialized.isDead;
+                    }
+                });
+                socket.on('dstr', id => {
+                    console.log(id);
+                });
+                field = new Field(fieldWidth, fieldHeight, tileImage);
+                objects = {};
+            }
+            function drawGame(ctx, w, h) {
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.rect(0, 0, w, h);
+                ctx.fill();
+                field.draw(ctx, w, h);
+                for (const [id, tank] of Object.entries(tanks)) {
+                    if (tank.isDead) {
+                        explosionSound.play();
+                        delete tanks[id];
+                    } else {
+                        tank.draw(ctx, w, h);
+                    }
+                }
+                // ?
+            }
+            function drawResults(ctx, w, h) {
+                const [cx, cy] = [w * 0.5, h * 0.5];
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.rect(0, 0, w, h);
+                ctx.fill();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = titleFont;
+                let message, color;
+                if (!tank1 && !tank2) {
+                    color = 'white';
+                    message = 'Game Over';
+                } else if (!tank1) {
+                    color = 'blue';
+                    message = 'Tank 2 Won!';
+                } else {
+                    color = 'red';
+                    message = 'Tank 1 Won!';
+                }
+                ctx.fillStyle = color;
+                ctx.fillText(message, cx, cy);
+                ctx.fillStyle = 'gray';
+                ctx.font = subtitleFont;
+                ctx.fillText('Press Space to Continue', cx, h - (h * 0.1));
+            }
+            function keyDown(key) {
+                switch (currentState) {
+                    case titleState:
+                        keyDownInTitle(key);
+                        break;
+                    case gameState:
+                        keyDownInGame(key);
+                        break;
+                    case resultsState:
+                        keyDownInResults(key);
+                        break;
+                }
+            }
+            function keyDownInTitle(key) {
+                if (key === ' ') {
+                    initGame();
+                    currentState = gameState;
+                }
+            }
+            function keyDownInGame(key) {
+                if (!['w', 'a', 's', 'd', 'e'].includes(key)) {
+                    return;
+                }
+                switch (key) {
+                    case 'w':
+                        socket.emit('cmd', 'w');
+                        break;
+                    case 's':
+                        socket.emit('cmd', 's');
+                        break;
+                    case 'a':
+                        socket.emit('cmd', 'a');
+                        break;
+                    case 'd':
+                        socket.emit('cmd', 'd');
+                        break;
+                    case 'e':
+                        socket.emit('cmd', 'e');
+                        fireSound.play();
+                        break;
+                }
+            }
+            function keyDownInResults(key) {
+                if (key === ' ') {
+                    currentState = titleState;
+                }
+            }
+        </script>
+    </body>
+</html>
